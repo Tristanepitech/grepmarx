@@ -24,7 +24,9 @@ RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements-pgsql.txt
 
 # Dependency scan (cdxgen / depscan) requirements
-RUN apt-get update && apt-get install -y npm openjdk-21-jdk maven gradle golang composer && apt-get clean
+RUN apt-get update -y 
+RUN apt-get install -y npm openjdk-21-jdk maven gradle golang composer
+RUN apt-get clean
 RUN npm install -g @cyclonedx/cdxgen@11.1.4
 
 # Application Inspector dependencies (dotnet runtime)

@@ -95,11 +95,11 @@ def async_scan(self, analysis_id, scans, exports):
         progress(analysis, 0)
     
         # SAST scan: invoke opengrep if scan selected
-        if "SAST" in scans :
-            files_to_scan, project_rules_path, ignore = generate_opengrep_options(analysis)
-            progress(analysis, 5)
-            sast_scan(analysis, files_to_scan, project_rules_path, ignore, exports)
-            progress(analysis, 30)
+        # if "SAST" in scans :
+        #     files_to_scan, project_rules_path, ignore = generate_opengrep_options(analysis)
+        #     progress(analysis, 5)
+        #     sast_scan(analysis, files_to_scan, project_rules_path, ignore, exports)
+        #     progress(analysis, 30)
 
         # SCA scan: invoke depscan if scan selected
         if "SCA" in scans :
@@ -109,10 +109,10 @@ def async_scan(self, analysis_id, scans, exports):
             progress(analysis, 70)
 
         # Inspector scan: invoke ApplicationInspector if scan selected
-        if "Appinspector" in scans :
-            inspector_result = inspector_scan(analysis)
-            progress(analysis, 80)
-            load_inspector_results(analysis, inspector_result)
+        # if "Appinspector" in scans :
+        #     inspector_result = inspector_scan(analysis)
+        #     progress(analysis, 80)
+        #     load_inspector_results(analysis, inspector_result)
 
         progress(analysis, 100)
         analysis.project.status = STATUS_FINISHED
@@ -659,6 +659,7 @@ def sca_scan(analysis):
     source_path = os.path.join(
         os.getcwd(), PROJECTS_SRC_PATH, str(analysis.project.id), EXTRACT_FOLDER_NAME
     )
+    # source_path = f"/data/projects/{analysis.project.id}/extract"
     current_app.logger.info(
         "[Analysis %i] Depscan source path: %s", analysis.id, source_path
     )
@@ -673,23 +674,34 @@ def sca_scan(analysis):
     # Launch depscan analysis
     current_app.logger.info("[Analysis %i] Depscan execution", analysis.id)
     try:
-        result = subprocess.run(
-            cwd=source_path,
-            timeout=DEPSCAN_TIMEOUT,
-            capture_output=True,
-            text=True,
-            args=[
-                DEPSCAN,
-                "--no-banner",
-                "--no-vuln-table",
-                "--sync",
+        args=[
+                # "--no-banner",
+                # "--no-vuln-table",
+                # "--sync",
                 "--src",
                 source_path,
                 "--reports-dir",
                 output_folder,
             ],
-        ).stdout
-        current_app.logger.info(result)
+        task = celery.send_task("worker.run_depscan", args=[args, source_path])
+        return f"Tâche Depscan envoyée : {task.id}"
+        # result = subprocess.run(
+        #     cwd=source_path,
+        #     timeout=DEPSCAN_TIMEOUT,
+        #     capture_output=True,
+        #     text=True,
+        #     args=[
+        #         DEPSCAN,
+        #         "--no-banner",
+        #         "--no-vuln-table",
+        #         "--sync",
+        #         "--src",
+        #         source_path,
+        #         "--reports-dir",
+        #         output_folder,
+        #     ],
+        # ).stdout
+        # current_app.logger.info(result)
     # Other exceptions will be catched in async_scan()
     except subprocess.TimeoutExpired:
         current_app.logger.warning(

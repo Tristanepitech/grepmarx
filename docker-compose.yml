@@ -45,6 +45,16 @@ services:
     depends_on: 
       - grepmarx
 
+  celery:
+    build: ./celery_worker
+    container_name: celery-worker
+    depends_on:
+      - redis
+    volumes:
+      - ./celery_worker:/sca
+      - /var/run/docker.sock:/var/run/docker.sock  # accès à Docker
+      - ./data:/data
+
 volumes:
     db-data:
     gpx-data:
