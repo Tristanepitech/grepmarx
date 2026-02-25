@@ -13,6 +13,11 @@ from flask_login import LoginManager
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 
+# log tools
+
+import logging
+import sys
+
 # load the extension
 
 db = SQLAlchemy()
@@ -20,7 +25,11 @@ login_manager = LoginManager()
 ldap_manager = LDAP3LoginManager()
 
 # Instantiate Celery
-celery = Celery(__name__)
+celery = Celery(
+    "grepmarx",
+    broker="redis://redis:6379/0",
+    backend="redis://redis:6379/0"
+)
 
 
 def register_extensions(app):
@@ -47,12 +56,52 @@ def configure_database(app):
         db.session.remove()
         
 
+# def create_app(config):
+
+#     # Init app and config
+#     app = Flask(__name__, static_folder="base/static")
+#     app.config.from_object(config)
+    
+#     # Configure Celery
+#     celery.config_from_object(config)
+#     celery.conf.update(app.config)
+#     # Register modules
+#     register_extensions(app)
+#     register_blueprints(app)
+
+#     # Configure DB
+#     configure_database(app)
+#     Migrate(app=app, db=db, compare_type=True)
+
+#     return app
+
+def configure_logging(app):
+    # Delet default handlers (Gunicorn)
+    app.logger.handlers.clear()
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+
+    formatter = logging.Formatter(
+        "[%(asctime)s] %(levelname)s in %(module)s: %(message)s"
+    )
+    handler.setFormatter(formatter)
+
+    app.logger.addHandler(handler)
+    app.logger.setLevel(logging.INFO)
+
+    # Important pour Gunicorn
+    app.logger.propagate = False
+
+
 def create_app(config):
 
     # Init app and config
     app = Flask(__name__, static_folder="base/static")
     app.config.from_object(config)
-    
+
+    configure_logging(app)
+
     # Configure Celery
     celery.config_from_object(config)
     celery.conf.update(app.config)
@@ -64,5 +113,8 @@ def create_app(config):
     configure_database(app)
     Migrate(app=app, db=db, compare_type=True)
 
+    app.logger.info("Grepmarx application started")
+
     return app
+
 

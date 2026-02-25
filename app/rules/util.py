@@ -11,6 +11,7 @@ from shutil import rmtree
 from urllib.parse import urlparse, urlunparse
 
 import git
+from git import GitCommandError
 from flask import current_app
 from app import db
 from app.constants import (
@@ -158,8 +159,9 @@ def save_rule_in_db(filename):
                             if "confidence" in metadata:
                                 rule.confidence = metadata["confidence"]
                         # Replace rule level/severity by a calculated one
-                        rule.severity = c_rule["severity"]
-                        generate_severity(rule)
+                        if c_rule["severity"]:
+                            rule.severity = c_rule["severity"]
+                            generate_severity(rule)
                         current_app.logger.debug(
                             "Rule imported in DB: %s",
                             repository + "/" + rule.category + "/" + rule.title,
@@ -303,10 +305,17 @@ def pull_rule_repo(repo):
     Args:
         repo (RuleRepository): rule repository to pull
     """
-    repo_path = os.path.join(RULES_PATH, repo.name)
-    git.cmd.Git(repo_path).pull()
-    repo.last_update_on = datetime.now()
-    db.session.commit()
+    if not repo.name:
+        return
+    try :
+        repo_path = os.path.join(RULES_PATH, repo.name)
+        git.cmd.Git(repo_path).pull()
+        repo.last_update_on = datetime.now()
+        db.session.commit()
+    except GitCommandError:
+         current_app.logger.error("Error when try to clone the repo : %s", repo_path)
+    except Exception as e:
+        current_app.logger.error("Unknow Error : %s", e)
 
 
 def remove_rule_repo(repo):

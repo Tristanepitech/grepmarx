@@ -16,6 +16,10 @@ from shutil import copyfile, rmtree
 import subprocess
 import traceback
 import redis
+from celery import Celery
+from time import sleep
+import docker
+
 
 from flask import current_app, make_response
 
@@ -64,11 +68,11 @@ from app.projects.util import (
 )
 from app.rules.util import generate_severity
 from collections import defaultdict
-
+from celery.exceptions import TimeoutError
+from celery import chord, shared_task, chain
 ##
 ## Analysis utils
 ##
-
 
 @celery.task(name="grepmarx-scan", bind=True, queue='scans')
 def async_scan(self, analysis_id, scans, exports):
@@ -592,6 +596,7 @@ def import_rules(analysis, rule_folder):
     for c_rule_pack in analysis.rule_packs:
         for c_rule in c_rule_pack.rules:
             src = os.path.join(RULES_PATH, c_rule.file_path)
+            current_app.logger.debug("SRC : %s --------------------------------------------", src)
             # Local custom rule
             if c_rule.repository is None or c_rule.category is None:
                 dst = os.path.join(
@@ -672,51 +677,127 @@ def sca_scan(analysis):
     # Clean previous depscan results
     delete_sca_files(output_folder)
     # Launch depscan analysis
+
+    DATA_PATH = os.getenv("GREPMARX_DATA_PATH")
+    reports_path = f'{DATA_PATH}/projects/{analysis.id}'
+
     current_app.logger.info("[Analysis %i] Depscan execution", analysis.id)
-    try:
-        args=[
-                # "--no-banner",
-                # "--no-vuln-table",
-                # "--sync",
-                "--src",
-                source_path,
-                "--reports-dir",
-                output_folder,
-            ],
-        task = celery.send_task("worker.run_depscan", args=[args, source_path])
-        return f"Tâche Depscan envoyée : {task.id}"
-        # result = subprocess.run(
-        #     cwd=source_path,
-        #     timeout=DEPSCAN_TIMEOUT,
-        #     capture_output=True,
-        #     text=True,
-        #     args=[
-        #         DEPSCAN,
-        #         "--no-banner",
-        #         "--no-vuln-table",
-        #         "--sync",
-        #         "--src",
-        #         source_path,
-        #         "--reports-dir",
-        #         output_folder,
-        #     ],
-        # ).stdout
-        # current_app.logger.info(result)
-    # Other exceptions will be catched in async_scan()
-    except subprocess.TimeoutExpired:
-        current_app.logger.warning(
-            "Depscan scan was cancelled because exceeding defined timeout (%i seconds)",
-            DEPSCAN_TIMEOUT,
-        )
+
+    #Call Celery worker to launch task
+    # result = celery.signature("worker.run_depscan", args=[analysis.project.id]).delay()
+    # task1 = celery.signature("worker.run_depscan", args=analysis.project.id)
+    # task2 = celery.signature("grepmarx.after_scan_depscan")
+    # task3 = celery.signature("worker.run_test")
+    # task4 = celery.signature("grepmarx.run_test")
+    # print(dir(chain(task1(args=[analysis.project.id]), task3()).apply_async()))
+    # workflow = chain(task1(args=[analysis.project.id]), task3()).apply_async()
+
+    # print(dir(celery.signature("worker.run_depscan", args=(analysis.project.id,))))
+    # workflow = chain(celery.signature("worker.run_depscan"), 
+    #                  celery.signature("worker.run_depscan")).apply_async()
+    # print("Workflow ID:", workflow.id)
+    # print(celery.tasks.keys())
+    # celery.signature("grepmarx.run_depscan", args=(analysis.project.id,)).apply_async()
+
+    # print("TASK OBJECT:", run_depscan)
+    # print("TASK TYPE:", type(run_depscan))
+    result = run_depscan(analysis)
+    # workflow = chain(task1.apply_async(args=[analysis.project.id]), 
+    #                  task2.apply_async(args=[f"{DATA_PATH}/projects/{analysis.project.id}/reports/sbom-universal.cdx.json", analysis.id]))
+    # workflow = chain(
+    #         celery.signature("worker.run_depscan").s(analysis.project.id), 
+    #         celery.signature("grepmarx.after_scan_depscan").si(
+    #                 f"{DATA_PATH}/projects/{analysis.project.id}/reports/sbom-universal.cdx.json",
+    #                 analysis.id
+    #             )
+    #         )
+    # workflow.apply_async()
+    
+    # celery.signature("worker.run_depscan").subtask("grepamarx.after_scan_depscan", args=(analysis.id))
+    # task = celery.signature("worker.run_depscan")
+    # task.apply_async(args=[analysis.project.id], callback=after_scan_depscan(analysis.id))
+    # celery.task("grepmarx.after_scan_depscan", args=[analysis.id])
+    # after_scan_depscan("path", analysis.id).delay()
+    # try:
+        # celery.send_task(
+        #     "worker.run_depscan",
+        #     args=[analysis.project.id],
+        # )
+        # reports_path = async_result.get(timeout=DEPSCAN_TIMEOUT)
+    # except TimeoutError:
+    #     current_app.logger.warning(
+    #         "Depscan scan was cancelled because exceeding defined timeout (%i seconds)",
+    #         DEPSCAN_TIMEOUT,
+    #     )
+    # except Exception as e:
+    #     print(e)
     # Return depscan JSON result as list of dicts
+    # result = list()
+    # vex_files = glob(pathname=os.path.join(reports_path, "*.vdr.json"))
+    # for file in vex_files:
+    #     with open(file) as f:
+    #         result.append(json.load(f))
+    # current_app.logger.info("[Analysis %i] SCA scan (depscan) finished", analysis.id)
+    return result
+
+@celery.task(name="grepmarx.after_scan_depscan")
+@shared_task
+def after_scan_depscan(result_path, analysis_id):
+    print("AFTER DEPSCAN LAUNCHED ----------------------------------")
     result = list()
-    vex_files = glob(pathname=os.path.join(output_folder, "*.vdr.json"))
+    vex_files = glob(pathname=os.path.join(result_path, "*.vdr.json"))
+    print(vex_files)
     for file in vex_files:
         with open(file) as f:
             result.append(json.load(f))
-    current_app.logger.info("[Analysis %i] SCA scan (depscan) finished", analysis.id)
+    current_app.logger.info("[Analysis %i] SCA scan (depscan) finished", analysis_id)
     return result
 
+
+@celery.task(name="grepmarx.run_depscan")
+@shared_task
+def run_depscan(analysis):
+
+    print("DEPSCAN LAUNCHED ----------------------------------")
+    # client = docker.from_env()
+    client = docker.APIClient(base_url='unix://var/run/docker.sock')
+    
+    source_path = os.path.expanduser(
+    f"/opt/grepmarx/projects/{analysis.project.id}"
+    )
+    DATA_PATH = os.getenv("GREPMARX_DATA_PATH")
+    container = client.create_container(
+    image="depscan-worker",
+    command=[
+        "-i", "/scan/target",
+        "-o", "/scan/reports",
+        "--no-banner",
+        "--no-vuln-table",
+    ],
+    user="0:0",
+    volumes=['/scan/target', '/scan/reports'],
+    host_config=client.create_host_config(binds={
+        f'{source_path}': {
+            'bind': '/scan/target',
+            'mode': 'ro',
+        },
+        f'{source_path}/reports': {
+            'bind': '/scan/reports',
+            'mode': 'rw',
+        },
+    }),
+    )
+    client.start(container=container.get("Id"))
+    client.wait(container=container.get("Id"))
+    client.remove_container(container=container.get("Id"))
+    after_scan_depscan(source_path, analysis.id)
+    return source_path
+# @celery.task(name="grepmarx.run_test")
+# @shared_task
+# def run_test():
+#     sleep(10)
+#     print("SUPET MEGA TEST GREPMARX -------------------------------")
+#     return
 
 def delete_sca_files(folder):
     for filename in os.listdir(folder):
@@ -748,6 +829,7 @@ def load_sca_scan_results(analysis, dict_sca_results):
             analysis.id,
             len(sca_results["vulnerabilities"]),
         )
+        print("TEST -----------------------------------------")
         for c_vuln in sca_results["vulnerabilities"]:
             # Identify affected dependency
             bom_ref = c_vuln["bom-ref"]

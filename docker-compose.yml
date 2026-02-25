@@ -20,7 +20,9 @@ services:
   grepmarx:
     restart: always
     volumes: 
-      - gpx-data:/opt/grepmarx/data
+      - ~/.local/share/grepmarx/projects/:/opt/grepmarx/data/projects/
+      - ~/.local/share/grepmarx/rules/:/opt/grepmarx/data/rules/
+      - /var/run/docker.sock:/var/run/docker.sock
       # todo add docker socket
     #  - ./ldap-cert:/opt/grepmarx/ldap-cert/
     build: .
@@ -45,15 +47,15 @@ services:
     depends_on: 
       - grepmarx
 
-  celery:
-    build: ./celery_worker
-    container_name: celery-worker
-    depends_on:
-      - redis
-    volumes:
-      - ./celery_worker:/sca
-      - /var/run/docker.sock:/var/run/docker.sock  # accès à Docker
-      - ./data:/data
+  # celery:
+  #   build: ./celery_worker
+  #   container_name: celery-worker
+  #   env_file:
+  #     - .env_common
+  #   depends_on:
+  #     - redis
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
     db-data:
